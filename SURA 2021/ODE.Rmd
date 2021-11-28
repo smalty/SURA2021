@@ -1,0 +1,279 @@
+---
+title: "SURA Project 2021"
+author: "Edric Eun"
+date: "6/13/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+ODE_step = function(X, z0, a, b, Q, t) {
+  actors = dim(X)[1]
+  dt = t/1000
+  z = z0
+  z_t = list()
+  for (aa in 1:actors) {
+    z_t[[aa]] = c(z0[aa, 1])
+  }
+  for (ii in 1:1000) {
+    z = z + (((diag(actors)*a) + (Q*b))%*%z)*dt
+    for (aa in 1:actors) {
+      z_t[[aa]][ii+1] = z[aa,1]
+    }
+  }
+  for (aa in 1:actors) {
+    plot(seq(0,t, by = dt), z_t[[aa]], xlab = "t", ylab = 
+          paste("Z",toString(aa), sep = ""), type="l")
+  }
+  return(z)
+}
+
+X = matrix(c(0,0,0,1,0,1,1,0,0), nrow = 3, ncol = 3)
+Q = matrix(c(0,0,0,1/2,0,1,1/2,0,0), nrow = 3, ncol = 3)
+z0 = matrix(c(0, 1, 0.5), ncol = 1)
+a = -2
+b = 1
+t = 3
+ODE_step(X, z0, a, b, Q, t)
+Q
+```
+```{r}
+plot(network(X), label = c(1, 2, 3), vertex.cex = 2)
+```
+
+
+
+```{r}
+ODE_integrate = function(X, z0, A, t_final) {
+  #Number of actors
+  actors = dim(A)[1]
+  
+  #Graph network
+  plot(network(X), label = 1:actors, vertex.cex = 2)
+  
+  #dt is interval for plotting
+  dt = t_final/1000
+  
+  #Initial time is 0
+  t = 0
+  
+  #Store z values of actors in z_t
+  z_t = matrix(0, nrow = 1001, ncol = actors)
+  
+  #Set initial values z0 in z_t
+  for (aa in 1:actors) {
+    z_t[1, aa] = z0[aa, 1]
+  }
+  
+  #Calculate z values from equation and store
+  for (ii in 1:1000) {
+    V = expm(A*t)%*%z0
+    for (aa in 1:actors) {
+      z_t[ii+1, aa] = V[aa,1]
+    }
+    t = t + dt
+  }
+  y_min = min(z_t)
+  y_max = max(z_t)
+  
+  #Plot all values of values of z by actor
+  plot(seq(0,t_final, by = dt), z_t[, 1], xlab = "t", ylab = "Z(t)", type="l", col = 1, ylim = c(y_min, y_max))
+  for (aa in 2:actors) {
+    lines(seq(0,t_final, by = dt), z_t[, aa], col = aa)
+  }
+  legend("topleft", paste(1:actors), fill = 1:actors)
+  
+  #Return final value of z
+  return(V)
+}
+```
+
+```{r}
+X = matrix(c(0,0,0,1,0,1,1,0,0), nrow = 3, ncol = 3)
+z0 = Matrix(c(0, 1, 0.5), ncol = 1)
+A = Matrix(c(-2,0,0,1/2,-2,1,1/2,0,-2), nrow = 3, ncol = 3)
+t = 3
+ODE_integrate(X, z0, A, t)
+```
+```{r}
+ivec = function(a) {
+  #Find number of rows in column vector
+  nr = dim(a)[1]
+  
+  #Change dimensions to square matrix
+  dim(a) = c(sqrt(nr), sqrt(nr))
+  
+  #Return transpose of matrix
+  return(t(a))
+}
+
+vec = function(B) {
+  #Transpose matrix
+  B = t(B)
+  
+  #Change dimensions to column vector
+  dim(B) = c(dim(B)[1]*dim(B)[2], 1)
+  
+  #Return vector
+  return(B)
+}
+
+rowNormalize = function(X) {
+  n = dim(X)[1]
+  a = 1/rowSums(X)
+  a[is.infinite(a)] = 0
+  return(diag(a, nrow = n, ncol = n) %*% X)
+}
+```
+
+```{r}
+SDE_cov = function(A, dt, G) {
+  p = dim(A)[1]
+  I_p = diag(p)
+  k1 = kronecker(A, I_p)
+  k2 = kronecker(I_p, A)
+  p1 = solve(k1 + k2)
+  p2 = kronecker(expm(A*dt),expm(A*dt)) - kronecker(I_p, I_p)
+  p3 = vec(G%*%t(G))
+  return(ivec(p1%*%p2%*%p3))
+}
+```
+
+```{r}
+SDE_integrate = function(X, z0, t_final, a, b, c, g) {
+  #Number of actors
+  actors = dim(X)[1]
+  
+  #Graph network
+  plot(network(X), label = 1:actors, vertex.cex = 2)
+  
+  #dt is interval for plotting
+  dt = t_final/1000
+  
+  #Initial time is 0
+  t = 0
+  
+  #Store z values of actors in z_t
+  z_t = matrix(0, nrow = 1001, ncol = actors)
+  
+  #Set initial values z0 in z_t
+  z_t[1,] = z0[,1]
+  
+  #Set initial values A, B, G
+  A = c*rowNormalize(X) + a*diag(actors)
+  B = b*as.matrix(rep(1, actors))
+  G = g*diag(actors)
+  
+  #Calculate z values from equation and store
+  for (ii in 1:1000) {
+    V = matrix(0, nrow = actors, ncol = 1)
+    
+    #Calculate Brownian motion
+    W = rmvnorm(1, mean = rep(0, actors), sigma = SDE_cov(A, dt, G), checkSymmetry = FALSE)
+    
+    V = expm(A*dt)%*%as.matrix(z_t[ii,]) + solve(A)%*%(expm(A*dt) - diag(actors))%*%B + t(W)
+  
+    z_t[ii+1,] = V[,1]
+  
+    t = t + dt
+  }
+  
+  y_min = min(z_t)
+  y_max = max(z_t)
+  
+  #Plot all values of values of z by actor
+  plot(seq(0,t_final, by = dt), z_t[, 1], xlab = "t", ylab = "Z(t)", type="l", col = 1, ylim = c(y_min, y_max))
+  for (aa in 2:actors) {
+    lines(seq(0,t_final, by = dt), z_t[, aa], col = aa)
+  }
+  legend("topleft", paste(1:actors), fill = 1:actors)
+  
+  #Return final value of z
+  return(V)
+}
+```
+
+
+```{r}
+X = matrix(c(0,1,0,0,0,1,1,0,0), nrow = 3, ncol = 3)
+z0 = matrix(c(0, 1, 0.5), ncol = 1)
+a = -2
+t = 4
+b = 2
+c = 1
+g = 0.1
+SDE_integrate(X, z0, t, a, b, c, g)
+```
+```{r}
+stu_t0 = as.data.frame(read.delim("C:/Users/edric/Documents/SURA 2021/stu98t0.txt", header = FALSE))
+stu_t0[,1] = NULL
+stu_t0[stu_t0 == 6 | stu_t0 == 4] = 0
+stu_t0[stu_t0 == 2 | stu_t0 == 3] = 1
+stu_t0 = as.matrix(stu_t0)
+
+stu_attr = as.data.frame(read.delim("C:/Users/edric/Documents/SURA 2021/stud98.txt", header = FALSE))
+a = -2
+t = 4
+b = 2
+c = 1
+g = 0.1
+smoke = stu_attr[,5]
+smoke[smoke == 99] = 1
+z0 = as.matrix(smoke)
+SDE_integrate(stu_t0, z0, t, a, b, c, g)
+```
+
+```{r}
+SDE_large = function(X, z0, t_final, a, b, c, g) {
+  #Number of actors
+  actors = dim(X)[1]
+  
+  #Set initial values A, B, G
+  A = c*rowNormalize(X) + a*diag(actors)
+  B = b*as.matrix(rep(1, actors))
+  G = g*diag(actors)
+  
+  #Calculate final attribute values
+  W = rmvnorm(1, mean = rep(0, actors), sigma = SDE_cov(A, t_final, G), checkSymmetry = FALSE)
+  
+  V = as.vector(expm(A*t_final)%*%z0 + solve(A)%*%(expm(A*t_final) - diag(actors))%*%B + t(W))
+  
+  cols = rep("blue", actors)
+  cols[which(V > 1.3)] = "red"
+  
+  #Plot final values of z by actor
+  barplot(V, xlab = "Z", ylab = "Freq", col = cols)
+  
+  #Graph network
+  plot(network(X), label = 1:actors, vertex.cex = 2, vertex.col = cols)
+  
+  #Return final value of z
+  return(V)
+}
+
+stu_t6 = as.data.frame(read.delim("C:/Users/edric/Documents/SURA 2021/stu98t6.txt", header = FALSE))
+stu_t6[,1] = NULL
+stu_t6[stu_t6 >= 4] = 0
+stu_t6[stu_t6 == 2 | stu_t6 == 3] = 1
+stu_t6 = as.matrix(stu_t6)
+
+stu_attr = as.data.frame(read.delim("C:/Users/edric/Documents/SURA 2021/stud98.txt", header = FALSE))
+a = -2
+t = 4
+b = 2
+c = 1
+g = 0.1
+smoke = stu_attr[,5]
+smoke[smoke == 99] = 1
+z0 = as.matrix(smoke)
+(z4 = SDE_large(stu_t6, z0, t, a, b, c, g))
+```
+
+```{r}
+cbind(rowSums(stu_t6), colSums(stu_t6), z4)
+```
+
